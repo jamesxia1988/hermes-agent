@@ -365,6 +365,22 @@ def _shutdown_backend_atexit() -> None:
 atexit.register(_shutdown_backend_atexit)
 
 
+def _backend_stop_and_clear() -> None:
+    """Stop the active backend and clear the cached instance.
+
+    Called after each computer_use tool call so cua-driver doesn't idle at ~45% CPU.
+    The next call to _get_backend() will cold-start a fresh instance (~1-2s).
+    """
+    global _backend
+    with _backend_lock:
+        if _backend is not None:
+            try:
+                _backend.stop()
+            except Exception:
+                pass
+        _backend = None
+
+
 def reset_backend_for_tests() -> None:  # pragma: no cover
     """Test helper — tear down the cached backend and per-session state."""
     _shutdown_backend_atexit()
@@ -509,6 +525,13 @@ def handle_computer_use(args: Dict[str, Any], **kwargs) -> Any:
     except Exception as e:
         logger.exception("computer_use %s failed", action)
         return json.dumps({"error": f"{action} failed: {e}"})
+    finally:
+        # Auto-cleanup: stop cua-driver after each call to save ~45% CPU.
+        # Next call will cold-start it automatically (~1-2s).
+        try:
+            _backend_stop_and_clear()
+        except Exception:
+            pass
 
 
 def _request_approval(action: str, args: Dict[str, Any],
